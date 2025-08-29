@@ -1,0 +1,455 @@
+<!DOCTYPE html><html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+  <title>Mini GTA-Style Prototype</title>
+  <style>
+    :root{
+      --ui-bg: rgba(20,22,28,.75);
+      --ui-text: #e9edf4;
+      --accent: #6ee7ff;
+      --danger: #ff6b6b;
+      --ok: #7CFC00;
+    }
+    html, body { height: 100%; margin: 0; background: #0f1117; color: var(--ui-text); font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, sans-serif; }
+    #wrap { display: grid; grid-template-rows: auto 1fr auto; height: 100%; }
+    header { padding: 10px 14px; display:flex; align-items:center; gap: 10px; background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,0)); backdrop-filter: blur(6px); position: sticky; top:0; z-index: 3; }
+    header h1 { font-size: 16px; margin: 0; letter-spacing: .5px; }
+    header .btn { background: var(--ui-bg); color: var(--ui-text); padding: 6px 10px; border-radius: 12px; border: 1px solid rgba(255,255,255,.08); cursor: pointer; }
+    header .btn:hover{ filter: brightness(1.2); }#gameRoot { position: relative; display:grid; place-items:center; }
+canvas { width: 100vw; height: calc(100vh - 120px); max-height: 76vh; image-rendering: pixelated; background: #1a1f2b; border-radius: 18px; box-shadow: 0 10px 40px rgba(0,0,0,.6), inset 0 0 0 1px rgba(255,255,255,.06); }
+
+/* HUD */
+.hud { position:absolute; inset:0; pointer-events: none; }
+.panel { position:absolute; background: var(--ui-bg); border:1px solid rgba(255,255,255,.08); border-radius: 12px; padding: 8px 10px; font-size: 12px; }
+.speed { left: 10px; bottom: 10px; }
+.wanted { right: 10px; top: 10px; width: 160px; display:flex; align-items:center; gap:6px; }
+.wanted .stars { display:flex; gap:4px; }
+.star { width: 16px; height: 16px; border-radius: 3px; background: rgba(255,255,255,.1); box-shadow: inset 0 0 0 1px rgba(255,255,255,.2); }
+.star.on { background: var(--danger); }
+.minimap { right: 10px; bottom: 10px; width: 150px; height: 150px; }
+.help { left: 10px; top: 10px; max-width: 46ch; line-height: 1.4; }
+.notice { left: 50%; transform: translateX(-50%); bottom: 10px; text-align:center; }
+
+/* Mobile controls */
+.controls { position: absolute; inset:0; pointer-events: none; }
+.stick, .buttons { position:absolute; bottom: 18px; }
+.stick { left: 18px; width: 160px; height: 160px; pointer-events: auto; touch-action: none; }
+.stick .base { position:absolute; inset:0; border-radius: 50%; background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.12); }
+.stick .knob { position:absolute; left: 50%; top: 50%; width: 68px; height: 68px; border-radius:50%; background: rgba(255,255,255,.18); transform: translate(-50%, -50%); border: 1px solid rgba(255,255,255,.25); }
+.buttons { right: 18px; display:flex; gap: 14px; pointer-events: auto; }
+.buttons .btn { width: 68px; height: 68px; display:grid; place-items:center; border-radius: 16px; background: rgba(255,255,255,.12); border:1px solid rgba(255,255,255,.22); font-weight:700; }
+
+footer { padding: 10px 14px; font-size: 12px; color: #98a2b3; opacity:.9; display:flex; justify-content:space-between; align-items:center; }
+code.k { background: rgba(255,255,255,.08); padding: 2px 6px; border-radius: 6px; }
+
+  </style>
+</head>
+<body>
+  <div id="wrap">
+    <header>
+      <h1>Mini GTA‑Style Prototype <span style="opacity:.6;font-weight:500">— top‑down driving, police, wanted level</span></h1>
+      <button id="resetBtn" class="btn" title="Reset world">Reset</button>
+      <button id="pauseBtn" class="btn" title="Pause/Resume">Pause</button>
+    </header><div id="gameRoot">
+  <canvas id="game" width="1200" height="720" aria-label="Game canvas"></canvas>
+  <div class="hud" aria-hidden>
+    <div class="panel help">
+      <div><strong>Controls</strong></div>
+      <div>Move: <code class="k">WASD</code> / Arrows • Enter/Exit car: <code class="k">E</code> • Handbrake: <code class="k">Space</code> • Toggle siren: <code class="k">F</code></div>
+      <div>Mobile: drag left stick • Tap <code class="k">E</code> / <code class="k">Brake</code> buttons</div>
+    </div>
+    <div class="panel speed" id="speedPanel">Speed: 0</div>
+    <div class="panel wanted">
+      Wanted Level
+      <div class="stars" id="stars"></div>
+    </div>
+    <canvas id="minimap" class="panel minimap" width="150" height="150"></canvas>
+    <div class="panel notice" id="notice"></div>
+  </div>
+
+  <!-- Mobile controls -->
+  <div class="controls" id="mobileControls" aria-hidden>
+    <div class="stick" id="stick">
+      <div class="base"></div>
+      <div class="knob" id="knob"></div>
+    </div>
+    <div class="buttons">
+      <div class="btn" id="btnE">E</div>
+      <div class="btn" id="btnBrake">Brake</div>
+    </div>
+  </div>
+</div>
+
+<footer>
+  <div>This is a learning prototype. It’s intentionally lightweight and fully client‑side.</div>
+  <div>Ideas: missions, shops, pedestrians, traffic lights, weapons, destructibles.</div>
+</footer>
+
+  </div>  <script>
+  // ===== Utility =====
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const lerp = (a,b,t)=>a+(b-a)*t;
+  const rand = (a,b)=>a+Math.random()*(b-a);
+  const TAU = Math.PI*2;
+
+  function aabbIntersect(ax,ay,aw,ah,bx,by,bw,bh){
+    return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
+  }
+
+  // ===== Input =====
+  const keys = new Set();
+  addEventListener('keydown', e=>{ keys.add(e.key.toLowerCase()); if([' '].includes(e.key)) e.preventDefault(); });
+  addEventListener('keyup', e=>{ keys.delete(e.key.toLowerCase()); });
+
+  // Mobile stick
+  const isTouch = matchMedia('(pointer: coarse)').matches;
+  const stick = document.getElementById('stick');
+  const knob = document.getElementById('knob');
+  const btnE = document.getElementById('btnE');
+  const btnBrake = document.getElementById('btnBrake');
+  let stickDir = {x:0,y:0};
+  if(isTouch){
+    document.getElementById('mobileControls').style.display = 'block';
+    let dragging = false; let origin = {x:0,y:0};
+    const onStart = (e)=>{ dragging=true; const t=e.touches?e.touches[0]:e; const r=stick.getBoundingClientRect(); origin={x:r.left+r.width/2, y:r.top+r.height/2}; move(t); };
+    const onMove = (e)=>{ if(!dragging) return; const t=e.touches?e.touches[0]:e; move(t); };
+    const onEnd = ()=>{ dragging=false; knob.style.left='50%'; knob.style.top='50%'; stickDir={x:0,y:0}; };
+    function move(t){
+      const dx = t.clientX - origin.x; const dy = t.clientY - origin.y; const max = 60; const mag = Math.hypot(dx,dy); const nx = clamp(dx/max,-1,1); const ny = clamp(dy/max,-1,1);
+      knob.style.left = 50 + clamp(dx/max*50,-50,50) + '%';
+      knob.style.top  = 50 + clamp(dy/max*50,-50,50) + '%';
+      stickDir = {x:nx, y:ny};
+    }
+    stick.addEventListener('pointerdown', onStart);
+    addEventListener('pointermove', onMove);
+    addEventListener('pointerup', onEnd);
+    // buttons
+    btnE.addEventListener('pointerdown', ()=>{ fakeKeyTap('e'); });
+    btnBrake.addEventListener('pointerdown', ()=>{ keys.add(' '); setTimeout(()=>keys.delete(' '), 180); });
+  } else {
+    document.getElementById('mobileControls').style.display = 'none';
+  }
+  function fakeKeyTap(k){ keys.add(k); setTimeout(()=>keys.delete(k), 90); }
+
+  // ===== World / Map =====
+  const tile = 64;
+  const mapW = 80, mapH = 80; // 5120 x 5120 world
+  // Simple layout: 0 grass, 1 road, 2 building
+  const map = new Uint8Array(mapW*mapH).fill(0);
+  // Generate a grid city with avenues and streets
+  for(let y=0;y<mapH;y++){
+    for(let x=0;x<mapW;x++){
+      if(x%6===0 || y%6===0) map[y*mapW+x]=1; // road every 6 tiles
+      if((x%6===3 && y%6===3) || (x%6===4 && y%6===4)) map[y*mapW+x]=2; // buildings blocks
+    }
+  }
+
+  // ===== Entities =====
+  let idCounter=1;
+  const entities = [];
+  function makeBox(x,y,w,h){ return {x,y,w,h}; }
+
+  function spawnCar(x,y,police=false){
+    const e={ id:idCounter++, type:'car', police, x, y, w:50, h:28, angle:0, vx:0, vy:0, speed:0, maxSpeed: police?8:7, accel: police?0.28:0.22, turn: 0.05, drag: 0.012, inUse:false, siren:false, hp: 100 };
+    entities.push(e); return e;
+  }
+  function spawnPed(x,y){ const e={ id:idCounter++, type:'ped', x,y,w:18,h:26, vx:0, vy:0, speed:2.2, wanderT:0, alive:true }; entities.push(e); return e; }
+  function spawnPlayer(x,y){ return { id:0, type:'player', x,y, w:18,h:26, vx:0, vy:0, speed:2.8, inCar:null, alive:true, money:100}; }
+
+  // Obstacles from buildings
+  const solids = [];
+  for(let y=0;y<mapH;y++){
+    for(let x=0;x<mapW;x++){
+      const t = map[y*mapW+x];
+      if(t===2){ solids.push(makeBox(x*tile, y*tile, tile, tile)); }
+    }
+  }
+
+  // ===== Game State =====
+  const state = {
+    t: 0,
+    player: spawnPlayer(tile*3, tile*3),
+    wanted: 0,
+    paused: false,
+  };
+
+  // Spawn vehicles and pedestrians
+  for(let i=0;i<18;i++) spawnCar(rand(6, mapW-6)*tile, rand(6, mapH-6)*tile, i%5===0);
+  for(let i=0;i<40;i++) spawnPed(rand(2, mapW-2)*tile, rand(2, mapH-2)*tile);
+
+  // ===== Rendering =====
+  const cvs = document.getElementById('game');
+  const ctx = cvs.getContext('2d');
+
+  function drawWorld(cam){
+    const {x:cx,y:cy} = cam;
+    // background grid tiles within view
+    const view = { x: cx - cvs.width/2, y: cy - cvs.height/2, w: cvs.width, h: cvs.height };
+    const x0 = Math.floor(view.x/tile)-1, x1 = Math.floor((view.x+view.w)/tile)+1;
+    const y0 = Math.floor(view.y/tile)-1, y1 = Math.floor((view.y+view.h)/tile)+1;
+
+    for(let y=y0;y<=y1;y++){
+      for(let x=x0;x<=x1;x++){
+        if(x<0||y<0||x>=mapW||y>=mapH) continue;
+        const t = map[y*mapW+x];
+        const rx = x*tile - view.x, ry = y*tile - view.y;
+        if(t===0){ // grass
+          ctx.fillStyle = '#15221a';
+          ctx.fillRect(rx, ry, tile, tile);
+          ctx.fillStyle = 'rgba(255,255,255,.03)';
+          ctx.fillRect(rx, ry, tile, tile);
+        }else if(t===1){ // road
+          ctx.fillStyle = '#2a2e39';
+          ctx.fillRect(rx, ry, tile, tile);
+          // lane lines
+          ctx.fillStyle = 'rgba(255,255,255,.1)';
+          ctx.fillRect(rx+tile/2-2, ry, 4, tile);
+        }else{ // building
+          ctx.fillStyle = '#2d1f1f';
+          ctx.fillRect(rx, ry, tile, tile);
+          ctx.fillStyle = 'rgba(255,255,255,.05)';
+          ctx.fillRect(rx+6, ry+6, tile-12, tile-12);
+        }
+      }
+    }
+  }
+
+  function drawCar(e, cam){
+    const view = { x: cam.x - cvs.width/2, y: cam.y - cvs.height/2 };
+    const x = e.x - view.x, y = e.y - view.y;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(e.angle);
+    ctx.fillStyle = e.police ? '#1f3b64' : '#333a';
+    ctx.fillRect(-e.w/2, -e.h/2, e.w, e.h);
+    ctx.fillStyle = '#bbb';
+    ctx.fillRect(-e.w/2+4, -e.h/2+6, e.w-8, e.h-12);
+    // lights
+    if(e.police && e.siren){
+      ctx.fillStyle = 'rgba(255,0,0,.7)';
+      ctx.fillRect(-e.w/2, -e.h/2, 10, 6);
+      ctx.fillStyle = 'rgba(0,150,255,.7)';
+      ctx.fillRect(e.w/2-10, -e.h/2, 10, 6);
+    }
+    ctx.restore();
+  }
+
+  function drawPed(e, cam){
+    const view = { x: cam.x - cvs.width/2, y: cam.y - cvs.height/2 };
+    const x = e.x - view.x, y = e.y - view.y;
+    ctx.fillStyle = e.alive ? '#d2d2d2' : '#551111';
+    ctx.fillRect(x-e.w/2, y-e.h/2, e.w, e.h);
+  }
+
+  function drawPlayer(cam){
+    const p = state.player; if(p.inCar) return;
+    const view = { x: cam.x - cvs.width/2, y: cam.y - cvs.height/2 };
+    const x = p.x - view.x, y = p.y - view.y;
+    ctx.fillStyle = '#8ef';
+    ctx.fillRect(x-p.w/2, y-p.h/2, p.w, p.h);
+  }
+
+  // Minimap
+  const mini = document.getElementById('minimap');
+  const mctx = mini.getContext('2d');
+  function drawMinimap(cam){
+    mctx.clearRect(0,0,mini.width,mini.height);
+    mctx.fillStyle = 'rgba(255,255,255,.06)';
+    mctx.fillRect(0,0,mini.width,mini.height);
+    const scale = mini.width/(mapW*tile);
+    // roads
+    for(let y=0;y<mapH;y++){
+      for(let x=0;x<mapW;x++){
+        const t = map[y*mapW+x];
+        if(t===1){
+          mctx.fillStyle = '#888';
+          mctx.fillRect(x*tile*scale, y*tile*scale, tile*scale, tile*scale);
+        }
+      }
+    }
+    // player
+    const px = (state.player.inCar? state.player.inCar.x : state.player.x)*scale;
+    const py = (state.player.inCar? state.player.inCar.y : state.player.y)*scale;
+    mctx.fillStyle = '#6cf';
+    mctx.fillRect(px-2, py-2, 4, 4);
+    // police
+    entities.filter(e=>e.type==='car'&&e.police).forEach(e=>{
+      mctx.fillStyle = '#f55';
+      mctx.fillRect(e.x*scale-2, e.y*scale-2, 4, 4);
+    });
+  }
+
+  // ===== Physics & AI =====
+  function collideWithSolids(b){
+    for(const s of solids){
+      if(aabbIntersect(b.x-b.w/2, b.y-b.h/2, b.w, b.h, s.x, s.y, s.w, s.h)){
+        return s;
+      }
+    }
+    return null;
+  }
+
+  function updateCar(e, dt){
+    // input if player is inside
+    const controlled = state.player.inCar===e;
+    let fwd=0, turn=0, braking = false;
+    if(controlled){
+      const up = keys.has('w')||keys.has('arrowup')||stickDir.y<-0.2;
+      const down = keys.has('s')||keys.has('arrowdown')||stickDir.y>0.2;
+      const left = keys.has('a')||keys.has('arrowleft')||stickDir.x<-0.2;
+      const right= keys.has('d')||keys.has('arrowright')||stickDir.x>0.2;
+      braking = keys.has(' ')||btnBrake.matches(':active');
+      if(up) fwd += 1; if(down) fwd -= 0.8;
+      if(left) turn -= 1; if(right) turn += 1;
+      if(keys.has('f') && e.police){ e.siren = !e.siren; keys.delete('f'); }
+    }
+
+    // basic car physics
+    e.speed += fwd * e.accel;
+    if(braking) e.speed *= 0.88;
+    e.speed *= (1 - e.drag);
+    e.speed = clamp(e.speed, -e.maxSpeed*0.6, e.maxSpeed);
+    if(Math.abs(e.speed) > 0.05){ e.angle += turn * e.turn * (e.speed>0?1:-1); }
+
+    e.vx = Math.cos(e.angle) * e.speed;
+    e.vy = Math.sin(e.angle) * e.speed;
+    e.x += e.vx; e.y += e.vy;
+
+    const hit = collideWithSolids({x:e.x,y:e.y,w:e.w,h:e.h});
+    if(hit){ // simple push-out
+      e.x -= e.vx; e.y -= e.vy; e.speed *= -0.2; e.hp -= 1; bump('Crash!'); incrWanted(0.02);
+    }
+
+    // AI for non-player cars
+    if(!controlled){
+      // very simple wandering or chasing if police
+      if(e.police && state.wanted>=1){
+        const tx = (state.player.inCar? state.player.inCar.x : state.player.x);
+        const ty = (state.player.inCar? state.player.inCar.y : state.player.y);
+        const ang = Math.atan2(ty - e.y, tx - e.x);
+        const diff = ((ang - e.angle + Math.PI*3) % TAU) - Math.PI;
+        e.angle += clamp(diff, -e.turn, e.turn);
+        e.speed = lerp(e.speed, e.maxSpeed*0.9, 0.02);
+      } else {
+        // wander along roads: align to nearest cardinal direction occasionally
+        if(Math.random()<0.01){ e.angle = [0,Math.PI/2,Math.PI,-Math.PI/2][(Math.random()*4)|0]; }
+        e.speed = lerp(e.speed, 4, 0.005);
+      }
+    }
+  }
+
+  function updatePed(e, dt){
+    if(!e.alive) return;
+    // wander
+    e.wanderT -= dt; if(e.wanderT<=0){ e.wanderT = rand(0.6, 2.0); const ang = rand(0, TAU); e.vx = Math.cos(ang)*e.speed; e.vy = Math.sin(ang)*e.speed; }
+    e.x += e.vx; e.y += e.vy;
+    // keep off buildings
+    const hit = collideWithSolids({x:e.x,y:e.y,w:e.w,h:e.h});
+    if(hit){ e.x -= e.vx; e.y -= e.vy; e.vx*=-0.5; e.vy*=-0.5; }
+
+    // react to speeding nearby car
+    const pc = state.player.inCar;
+    if(pc && Math.hypot(pc.x - e.x, pc.y - e.y) < 80 && Math.abs(pc.speed)>5){ e.vx += (e.x - pc.x)*0.02; e.vy += (e.y - pc.y)*0.02; }
+  }
+
+  // ===== Wanted System =====
+  const starsEl = document.getElementById('stars');
+  for(let i=0;i<5;i++){ const s=document.createElement('div'); s.className='star'; starsEl.appendChild(s); }
+  function renderWanted(){
+    const on = Math.floor(state.wanted);
+    [...starsEl.children].forEach((el,i)=>{ el.classList.toggle('on', i<on); });
+  }
+  function incrWanted(v){ state.wanted = clamp(state.wanted + v, 0, 5); renderWanted(); }
+  function decayWanted(dt){ state.wanted = Math.max(0, state.wanted - dt*0.02); renderWanted(); }
+
+  // ===== Player Interaction =====
+  addEventListener('keydown', (e)=>{
+    if(e.key.toLowerCase()==='e') tryEnterExit();
+  });
+
+  function tryEnterExit(){
+    const p = state.player;
+    if(p.inCar){ p.inCar.inUse=false; p.inCar=null; bump('Exited vehicle'); return; }
+    // find nearest car
+    let best=null, bd=28;
+    for(const e of entities){ if(e.type!=='car') continue; const d=Math.hypot(e.x-p.x, e.y-p.y); if(d<bd && !e.inUse){ best=e; bd=d; } }
+    if(best){ p.inCar = best; best.inUse=true; bump(best.police? 'Entered police car' : 'Entered vehicle'); if(best.police) incrWanted(0.2); }
+  }
+
+  function controlOnFoot(dt){
+    const p = state.player; if(p.inCar) return;
+    const up = keys.has('w')||keys.has('arrowup')||stickDir.y<-0.2;
+    const down = keys.has('s')||keys.has('arrowdown')||stickDir.y>0.2;
+    const left = keys.has('a')||keys.has('arrowleft')||stickDir.x<-0.2;
+    const right= keys.has('d')||keys.has('arrowright')||stickDir.x>0.2;
+    let vx=(right?1:0) - (left?1:0), vy=(down?1:0) - (up?1:0);
+    const mag = Math.hypot(vx,vy)||1; vx/=mag; vy/=mag;
+    p.vx = vx * p.speed; p.vy = vy * p.speed;
+    p.x += p.vx; p.y += p.vy;
+    const hit = collideWithSolids({x:p.x,y:p.y,w:p.w,h:p.h});
+    if(hit){ p.x -= p.vx; p.y -= p.vy; }
+  }
+
+  // ===== Camera =====
+  const cam = {x: state.player.x, y: state.player.y};
+  function updateCamera(){
+    const tx = state.player.inCar? state.player.inCar.x : state.player.x;
+    const ty = state.player.inCar? state.player.inCar.y : state.player.y;
+    cam.x = lerp(cam.x, tx, 0.08);
+    cam.y = lerp(cam.y, ty, 0.08);
+  }
+
+  // ===== Notifications =====
+  const notice = document.getElementById('notice');
+  let noticeT = 0;
+  function bump(text){ notice.textContent = text; noticeT = 1.8; }
+
+  // ===== UI Buttons =====
+  document.getElementById('resetBtn').onclick = ()=>{ location.reload(); };
+  document.getElementById('pauseBtn').onclick = ()=>{ state.paused = !state.paused; document.getElementById('pauseBtn').textContent = state.paused? 'Resume' : 'Pause'; };
+
+  // ===== Main Loop =====
+  let last = performance.now();
+  function tick(now){
+    const dt = Math.min(0.05, (now - last)/1000); last = now;
+    if(!state.paused){
+      state.t += dt;
+      controlOnFoot(dt);
+      for(const e of entities){ if(e.type==='car') updateCar(e, dt); else if(e.type==='ped') updatePed(e, dt); }
+      // Police awareness: collisions with police increase wanted
+      entities.filter(e=>e.type==='car'&&e.police).forEach(pol=>{
+        const target = state.player.inCar? state.player.inCar : state.player;
+        const close = Math.hypot(pol.x-target.x, pol.y-target.y) < 120;
+        if(close && state.wanted>0){ pol.siren = true; }
+      });
+
+      decayWanted(dt);
+      updateCamera();
+    }
+
+    // Render
+    ctx.clearRect(0,0,cvs.width,cvs.height);
+    drawWorld(cam);
+    for(const e of entities){ if(e.type==='car') drawCar(e, cam); else if(e.type==='ped') drawPed(e, cam); }
+    drawPlayer(cam);
+
+    // HUD
+    const spd = state.player.inCar? Math.abs(state.player.inCar.speed) : Math.hypot(state.player.vx||0, state.player.vy||0);
+    document.getElementById('speedPanel').textContent = 'Speed: ' + spd.toFixed(2);
+    if(state.player.inCar && state.player.inCar.hp<50 && (state.t%1)<0.5) bump('Vehicle damaged');
+    if((noticeT-=dt) <= 0){ notice.textContent=''; }
+
+    drawMinimap(cam);
+
+    requestAnimationFrame(tick);
+  }
+  renderWanted();
+  requestAnimationFrame(tick);
+
+  // Accessibility: resize canvas to fit while keeping internal resolution
+  function fit(){ const r = document.getElementById('game').getBoundingClientRect(); }
+  addEventListener('resize', fit);
+  fit();
+  </script></body>
+</html>
